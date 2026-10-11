@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-macos:
+    name: Build & Test (macOS)
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Swift Build
+        run: swift build -v
+
+      - name: Swift Test
+        run: swift test -v
+
+  build-ios:
+    name: Build iOS Package & Demo
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build VideoHashKit for iOS
+        run: xcodebuild -scheme VideoHashKit -destination "generic/platform=iOS" build
+
+      - name: Build iOS Demo App
+        run: xcodebuild -project Demo/Demo.xcodeproj -scheme Demo -destination "generic/platform=iOS Simulator" CODE_SIGNING_ALLOWED=NO build

@@ -140,5 +140,57 @@ final class VideoHashKitTests: XCTestCase {
         XCTAssertNotNil(nearGroup)
         XCTAssertEqual(nearGroup?.assets.count, 2)
         XCTAssertEqual(nearGroup?.bestAssetId, "vid_near_original") // 1080p original over 720p WhatsApp
+        
+        let similarGroup = groups.first { $0.category == .similar }
+        XCTAssertNotNil(similarGroup)
+        XCTAssertEqual(similarGroup?.assets.count, 2)
+    }
+    
+    // MARK: - VideoMultiIndexHasher Tests
+    
+    func testVideoMultiIndexHasherLookup() {
+        let mih = VideoMultiIndexHasher()
+        let hashes = [DualHash(dHash: 0x1234567890ABCDEF, pHash: 0xAABBCCDDEEFF0011)]
+        let fpA = VideoFingerprint(durationSeconds: 10.0, pixelWidth: 1920, pixelHeight: 1080, keyframeHashes: hashes)
+        let fpB = VideoFingerprint(durationSeconds: 10.5, pixelWidth: 1920, pixelHeight: 1080, keyframeHashes: hashes)
+        let fpDiff = VideoFingerprint(durationSeconds: 60.0, pixelWidth: 1920, pixelHeight: 1080, keyframeHashes: [DualHash(dHash: 0xFFFFFFFFFFFFFFFF, pHash: 0)])
+        
+        mih.insert(id: "vid_A", fingerprint: fpA)
+        mih.insert(id: "vid_B", fingerprint: fpB)
+        mih.insert(id: "vid_Diff", fingerprint: fpDiff)
+        
+        let candidates = mih.findCandidates(for: fpA)
+        XCTAssertTrue(candidates.contains("vid_A"))
+        XCTAssertTrue(candidates.contains("vid_B"))
+        XCTAssertFalse(candidates.contains("vid_Diff"))
+    }
+    
+    // MARK: - Reclaimable Video Space Tests
+    
+    func testReclaimableVideoStorageCalculation() {
+        let v1 = VideoAssetSnapshot(id: "1", filename: "v1.mov", durationSeconds: 15.0, pixelWidth: 3840, pixelHeight: 2160, fileSize: 400_000_000, isFavorite: true) // Keeper (400MB)
+        let v2 = VideoAssetSnapshot(id: "2", filename: "v2.mov", durationSeconds: 15.0, pixelWidth: 3840, pixelHeight: 2160, fileSize: 400_000_000, isFavorite: false)
+        let v3 = VideoAssetSnapshot(id: "3", filename: "v3.mov", durationSeconds: 15.0, pixelWidth: 3840, pixelHeight: 2160, fileSize: 400_000_000, isFavorite: false)
+        
+        let group = VideoDuplicateGroup(
+            category: .exactDuplicate,
+            assets: [v1, v2, v3],
+            bestAssetId: "1",
+            similarityScore: 1.0
+        )
+        
+        XCTAssertEqual(group.totalSize, 1_200_000_000)
+        XCTAssertEqual(group.reclaimableSize, 800_000_000) // v2 + v3 = 800MB saved
+        XCTAssertEqual(group.nonKeepers.count, 2)
+        XCTAssertEqual(group.keeper?.id, "1")
+    }
+    
+    // MARK: - Thermal Governor Tests
+    
+    func testThermalGovernorConcurrency() {
+        let governor = ThermalGovernor.shared
+        XCTAssertGreaterThanOrEqual(governor.recommendedConcurrency, 1)
+        XCTAssertFalse(governor.thermalStatusDescription.isEmpty)
     }
 }
+
