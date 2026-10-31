@@ -192,5 +192,59 @@ final class VideoHashKitTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(governor.recommendedConcurrency, 1)
         XCTAssertFalse(governor.thermalStatusDescription.isEmpty)
     }
+    
+    // MARK: - Promoted Match & Incremental Merging Tests
+    
+    func testPromotedExactMatchForReencodedVideo() {
+        let hashes = [
+            DualHash(dHash: 0x1111222233334444, pHash: 0x5555666677778888),
+            DualHash(dHash: 0x2222333344445555, pHash: 0x6666777788889999)
+        ]
+        // 2-bit noise on re-encode
+        let noiseHashes = [
+            DualHash(dHash: 0x1111222233334445, pHash: 0x5555666677778889),
+            DualHash(dHash: 0x2222333344445555, pHash: 0x6666777788889999)
+        ]
+        
+        let original = VideoFingerprint(durationSeconds: 10.0, pixelWidth: 1920, pixelHeight: 1080, keyframeHashes: hashes)
+        let reencoded = VideoFingerprint(durationSeconds: 10.05, pixelWidth: 1920, pixelHeight: 1080, keyframeHashes: noiseHashes)
+        
+        XCTAssertTrue(VideoDuplicateGrouper.isPromotedExactMatch(original, reencoded), "Same dimension + tight duration + low bit distance must be promoted to exact")
+        
+        // Different resolution should not be promoted to exact
+        let diffRes = VideoFingerprint(durationSeconds: 10.05, pixelWidth: 1280, pixelHeight: 720, keyframeHashes: noiseHashes)
+        XCTAssertFalse(VideoDuplicateGrouper.isPromotedExactMatch(original, diffRes))
+    }
+    
+    func testIncrementalMergeNewVideos() {
+        let now = Date()
+        let hashes = [
+            DualHash(dHash: 0x1122334455667788, pHash: 0xAABBCCDDEEFF0011)
+        ]
+        let fp1 = VideoFingerprint(durationSeconds: 12.0, pixelWidth: 1920, pixelHeight: 1080, keyframeHashes: hashes)
+        let fp2 = VideoFingerprint(durationSeconds: 12.0, pixelWidth: 1920, pixelHeight: 1080, keyframeHashes: hashes)
+        
+        let v1 = VideoAssetSnapshot(id: "v1", filename: "v1.mov", durationSeconds: 12.0, creationDate: now, pixelWidth: 1920, pixelHeight: 1080, fileSize: 100_000_000, fingerprint: fp1)
+        let v2 = VideoAssetSnapshot(id: "v2", filename: "v2.mov", durationSeconds: 12.0, creationDate: now, pixelWidth: 1920, pixelHeight: 1080, fileSize: 100_000_000, fingerprint: fp2)
+        
+        let initialGroups = VideoDuplicateGrouper.group(assets: [v1, v2])
+        XCTAssertEqual(initialGroups.count, 1)
+        XCTAssertEqual(initialGroups.first?.assets.count, 2)
+        
+        // Add an exact copy
+        let v3 = VideoAssetSnapshot(id: "v3", filename: "v3.mov", durationSeconds: 12.0, creationDate: now, pixelWidth: 1920, pixelHeight: 1080, fileSize: 100_000_000, fingerprint: fp1)
+        let (mergedGroups, didMerge) = VideoDuplicateGrouper.mergeNewVideos([v3], into: initialGroups)
+        XCTAssertTrue(didMerge)
+        XCTAssertEqual(mergedGroups.count, 1)
+        XCTAssertEqual(mergedGroups.first?.assets.count, 3)
+        XCTAssertTrue(mergedGroups.first?.assets.contains(where: { $0.id == "v3" }) == true)
+        
+        // Add an unrelated video
+        let diffFp = VideoFingerprint(durationSeconds: 90.0, pixelWidth: 1920, pixelHeight: 1080, keyframeHashes: [DualHash(dHash: 0xFFFF_FFFF_FFFF_FFFF, pHash: 0xFFFF_FFFF_FFFF_FFFF)])
+        let v4 = VideoAssetSnapshot(id: "v4", filename: "v4.mov", durationSeconds: 90.0, creationDate: now.addingTimeInterval(86400), pixelWidth: 1920, pixelHeight: 1080, fileSize: 500_000_000, fingerprint: diffFp)
+        let (afterUnrelated, mergedUnrelated) = VideoDuplicateGrouper.mergeNewVideos([v4], into: mergedGroups)
+        XCTAssertFalse(mergedUnrelated)
+        XCTAssertEqual(afterUnrelated.first?.assets.count, 3)
+    }
 }
 
